@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+._*
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Logs (this project writes to ~/Library/Logs, but ignore any local copies)
+*.log
+
+# Local install/test artifacts
+.osxphotos_export.db

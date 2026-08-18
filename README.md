@@ -20,6 +20,14 @@ into one folder per capture day.
 - **Tooling:** [osxphotos](https://github.com/RhetTbull/osxphotos) (the
   standard CLI for scripted Photos exports) driven by a macOS launchd agent.
 
+## Requirements
+
+- macOS with the Photos library you want to sync
+- `bash` (preinstalled on macOS)
+- Network access to `cm5.local`
+- One of `pipx`, Homebrew, or `pip3` available so `install.sh` can install
+  [osxphotos](https://github.com/RhetTbull/osxphotos)
+
 ## Files
 
 | File | Purpose |
@@ -29,6 +37,9 @@ into one folder per capture day.
 | `mount_nas_share.sh` | Mounts `smb://cm5.local/data` at `/Volumes/data` if not already mounted |
 | `sync_photos.sh` | The actual sync: mount check + `osxphotos export` |
 | `com.jason.photosnassync.plist` | launchd agent definition (installed to `~/Library/LaunchAgents/`) |
+
+All `.sh` scripts are tracked as executable in this repo, so `./install.sh`
+and `./uninstall.sh` work directly; `bash install.sh` also still works.
 
 ## Prerequisite (do this once, before running install.sh)
 
@@ -47,7 +58,7 @@ already done — skip ahead.
 
 ```bash
 cd photos_nas_sync
-bash install.sh
+./install.sh
 ```
 
 This installs osxphotos (via pipx, or Homebrew+pipx, or `pip3 --user` as a
@@ -127,7 +138,7 @@ launchctl load ~/Library/LaunchAgents/com.jason.photosnassync.plist
 
 ```bash
 cd photos_nas_sync
-bash uninstall.sh
+./uninstall.sh
 ```
 
 By default this stops and removes the launchd agent and deletes the copied
@@ -138,8 +149,8 @@ safe to delete automatically.
 
 Optional flags:
 ```bash
-bash uninstall.sh --remove-logs        # also delete the log files
-bash uninstall.sh --remove-osxphotos   # also uninstall osxphotos
+./uninstall.sh --remove-logs        # also delete the log files
+./uninstall.sh --remove-osxphotos   # also uninstall osxphotos
 ```
 
 To delete the exported photos/videos from the NAS too, do that manually from
