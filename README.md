@@ -208,6 +208,24 @@ things make this go smoothly:
   EXIF/location data, and the `--exiftool`-written metadata (GPS, title,
   caption, keywords, person names) are unaffected, and the export continues
   normally.
+- **`⚠️  exiftool warning ... Duplicate Orientation tag in IFD0`** — harmless,
+  safe to ignore. This means the *original* file itself already has
+  malformed EXIF (two Orientation tags), usually from having passed through
+  older/other editing software at some point before it was ever imported
+  into Photos. `exiftool` just picks one and warns; it still writes the rest
+  of the metadata and the file still exports normally.
+- **Exported filenames get a `(N)` suffix, e.g. `millerpark (6).jpg`** — on
+  its own this is expected, not a bug: it means `N` *different* photos in
+  your library (distinct UUIDs) would otherwise land on the same filename in
+  that day's folder (e.g. your camera/software reused a filename, or you
+  have several imports/edits of visually-similar shots), so `osxphotos`
+  uniquifies them so nothing gets silently overwritten. This is different
+  from the "re-copy everything from scratch" duplicate problem below — here
+  the number `N` should stay small and stable across runs (it's just
+  labeling genuinely distinct photos). Only treat it as the
+  tracking-database problem below if you also see the
+  same photo re-exported repeatedly across separate runs, or `N` growing
+  unbounded on runs that shouldn't be adding new photos.
 - **A run appears to re-copy everything from scratch, including files that
   already made it to the NAS** — this happens if `--update`'s tracking
   database can't be read (e.g. a prior run was interrupted, or SQLite's
