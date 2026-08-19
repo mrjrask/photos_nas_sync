@@ -110,6 +110,19 @@ fi
 
 echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 
+# exiftool is required by --exiftool below (osxphotos shells out to it) to
+# write Photos' own metadata -- GPS location, title, caption, keywords,
+# person names -- into each exported file's EXIF/IPTC/XMP tags. Without
+# this, only whatever metadata the camera originally embedded survives;
+# anything added or edited inside the Photos app itself (e.g. manually
+# geotagging a screenshot, or Photos' own reverse-geocoded location) lives
+# only in the Photos library database and would otherwise be silently lost
+# on export.
+if ! command -v exiftool >/dev/null 2>&1; then
+  echo "$LOG_TAG ERROR: exiftool not found on this Mac. Run install.sh first (or 'brew install exiftool')."
+  exit 1
+fi
+
 # 3. Incremental, full-resolution export.
 #    --library            pins the source library explicitly instead of
 #                         letting osxphotos auto-detect it by reading
@@ -139,6 +152,12 @@ echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 #                         network/SMB errors. This is short (seconds) and
 #                         doesn't cover a NAS actually rebooting -- that's
 #                         handled by the run-level retry loop below instead.
+#    --exiftool            writes Photos' metadata (GPS location, title,
+#                         caption, keywords, person names) into each
+#                         exported file's EXIF/IPTC/XMP tags via exiftool,
+#                         so metadata that only exists in the Photos
+#                         library database -- not in the original file --
+#                         is retained on the NAS copy too.
 #    (original filenames are kept by default -- no flag needed for that)
 PHOTOS_LIBRARY="$HOME/Pictures/Photos Library.photoslibrary"
 if [ ! -d "$PHOTOS_LIBRARY" ]; then
@@ -156,6 +175,7 @@ EXPORT_CMD=(
   --directory "{created.date}"
   --retry 3
   --touch-file
+  --exiftool
   --verbose
 )
 
