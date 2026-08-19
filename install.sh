@@ -38,6 +38,12 @@ echo "   macOS may pop up a permission dialog asking to allow access to your"
 echo "   Photos library -- click Allow, or scheduled runs will silently fail."
 echo "   (Deliberately done BEFORE the launchd agent is installed below, so"
 echo "   this manual run can't race with a login-triggered run over SMB.)"
+echo "   All progress output goes to the log below, not this terminal --"
+echo "   open another terminal window and run this to watch it live:"
+echo "     tail -f \"$HOME/Library/Logs/photos-nas-sync.log\""
+echo "   For a large (e.g. ~1TB) library: prefer a wired network connection,"
+echo "   keep this Mac plugged into power, and keep the lid open (or an"
+echo "   external display attached) so macOS can't clamshell-sleep mid-copy."
 if "$INSTALL_DIR/sync_photos.sh"; then
   echo "First run completed."
 else

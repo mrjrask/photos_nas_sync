@@ -109,6 +109,35 @@ launchctl unload ~/Library/LaunchAgents/com.jason.photosnassync.plist
 launchctl load ~/Library/LaunchAgents/com.jason.photosnassync.plist
 ```
 
+## Doing a large (e.g. ~1TB) initial migration
+
+The first run exports your entire library and can take many hours. A few
+things make this go smoothly:
+
+- **Prefer wired ethernet** over Wi-Fi for both this Mac and cm5 if possible
+  — much faster and far less prone to dropping mid-transfer.
+- **Keep the Mac plugged into power and awake.** `sync_photos.sh` now wraps
+  the export in `caffeinate` to prevent idle/system sleep, but that cannot
+  override a closed-lid (clamshell) sleep — keep the lid open, or keep an
+  external display/keyboard/mouse attached, for the duration of the initial
+  run.
+- **Watch progress live:** the sync's own output goes entirely to the log
+  file, not the terminal running `install.sh`. Open a second terminal and
+  run `tail -f ~/Library/Logs/photos-nas-sync.log`.
+- **It's fine if it doesn't finish in one sitting.** The export is
+  incremental (`--update`) and resumable — if a run is interrupted (network
+  drop, sleep, reboot), the next run (scheduled at 3 AM, at login, or run
+  manually) picks up where it left off rather than starting over. For ~1TB
+  it may legitimately take more than one day/run to complete.
+- **Check free space first** on both ends: `df -h /Volumes/data` on the NAS
+  side (the sync now logs this automatically at the start of each run) and
+  enough free space on this Mac's local disk, since iCloud-optimized
+  originals are downloaded locally before being exported to the NAS.
+- If a run is ever killed abruptly (force-quit, `kill -9`, crash) instead of
+  exiting normally, `sync_photos.sh` now detects that its lock is stale (the
+  owning process is no longer running) and reclaims it automatically on the
+  next run, rather than blocking forever.
+
 ## Troubleshooting
 
 - **"osxphotos not found"** — re-run `install.sh`, or check
@@ -123,6 +152,26 @@ launchctl load ~/Library/LaunchAgents/com.jason.photosnassync.plist
   `~/photos_nas_sync/sync_photos.sh` manually from Terminal once so macOS can
   prompt you for Photos access interactively, then check
   System Settings → Privacy & Security → Photos.
+- **`Operation not permitted:
+  .../Containers/com.apple.Photos/Data/Library/Preferences/com.apple.Photos.plist`**
+  — macOS is blocking access to Photos' own sandboxed preferences file, which
+  `osxphotos` reads to auto-detect your library. `sync_photos.sh` now passes
+  `--library` explicitly so this shouldn't happen going forward, but if it
+  does: check System Settings → Privacy & Security → Full Disk Access and
+  make sure Terminal (or whatever runs this script) is listed and enabled —
+  quit and reopen Terminal after changing it. This can also surface after a
+  reinstall of `osxphotos` (a new binary signature can require re-granting
+  access).
+- **NAS reboots or drops the SMB connection mid-export** — `osxphotos`'s own
+  recovery for this is short (~30 seconds) and it crashes the whole export
+  rather than continuing, so `sync_photos.sh` now retries the whole export
+  itself up to 3 times with backoff (1 min, 3 min, 5 min), re-checking the
+  mount before each retry. Since progress is tracked locally
+  (`--exportdb`), a retry resumes at the first not-yet-exported item rather
+  than starting over — no duplicates, nothing lost. If it still fails after
+  all retries, it logs that and waits for the next scheduled run (or run
+  `~/photos_nas_sync/sync_photos.sh` manually once the NAS is confirmed
+  back up).
 - **`mkdir: /Volumes/data/Photos: Operation not permitted`** — this happened
   during initial install because the manual first run and the login-triggered
   launchd run raced to create the folder at the same instant over SMB. Fixed:

@@ -27,18 +27,50 @@ LOG_TAG="[photos-nas-sync]"
 EXPORT_DB_DIR="$HOME/Library/Application Support/photos-nas-sync"
 EXPORT_DB="$EXPORT_DB_DIR/export.db"
 
+mkdir -p "$(dirname "$LOG_FILE")"
+
 # Local (non-network) lock so a launchd-triggered run and a manual run can
 # never overlap. Two processes racing to create $DEST_ROOT on the SMB share
 # at the same instant is what caused the "mkdir: Operation not permitted"
 # error during install -- this lock makes that impossible going forward.
+#
+# The lock dir's pid file lets a later run tell a genuinely-still-running
+# sync (plausible for hours on an initial 1TB+ export) apart from a stale
+# lock left by a run that was killed (crash, force-quit, kill -9) before its
+# EXIT trap could fire -- without this check, a stale lock would silently
+# block every future scheduled run forever.
 LOCK_DIR="/tmp/photos-nas-sync.lock"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+LOCK_PID_FILE="$LOCK_DIR/pid"
+
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo $$ > "$LOCK_PID_FILE"
+    return 0
+  fi
+  local existing_pid
+  existing_pid="$(cat "$LOCK_PID_FILE" 2>/dev/null || true)"
+  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+    return 1
+  fi
+  echo "$(date '+%Y-%m-%d %H:%M:%S') $LOG_TAG Removing stale lock at $LOCK_DIR (owner pid ${existing_pid:-unknown} not running)." >> "$LOG_FILE"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null || return 1
+  echo $$ > "$LOCK_PID_FILE"
+}
+
+if ! acquire_lock; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') $LOG_TAG Another sync is already running (lock held at $LOCK_DIR). Exiting." >> "$LOG_FILE"
   exit 0
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+trap 'rm -rf "$LOCK_DIR" 2>/dev/null' EXIT
 
-mkdir -p "$(dirname "$LOG_FILE")"
+# Rotate the log before this run if it's grown large -- --verbose on a
+# library this size produces a lot of output, and nothing else trims it.
+LOG_MAX_BYTES=$((100 * 1024 * 1024))
+if [ -f "$LOG_FILE" ] && [ "$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
+  mv -f "$LOG_FILE" "$LOG_FILE.1"
+fi
+
 exec >> "$LOG_FILE" 2>&1
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') $LOG_TAG run start ====="
@@ -57,6 +89,8 @@ if ! mkdir -p "$DEST_ROOT"; then
 fi
 
 mkdir -p "$EXPORT_DB_DIR"
+
+echo "$LOG_TAG Destination free space: $(df -h "$DEST_ROOT" | awk 'NR==2{print $4}')"
 
 # 2. Locate the osxphotos binary (handles pipx / brew / pip --user installs).
 OSXPHOTOS_BIN="$(command -v osxphotos || true)"
@@ -77,6 +111,17 @@ fi
 echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 
 # 3. Incremental, full-resolution export.
+#    --library            pins the source library explicitly instead of
+#                         letting osxphotos auto-detect it by reading
+#                         ~/Library/Containers/com.apple.Photos/.../
+#                         com.apple.Photos.plist. That plist lives inside
+#                         Photos' sandboxed container and requires Full Disk
+#                         Access -- if that TCC grant is ever missing/reset
+#                         (e.g. after an OS update or a pipx reinstall
+#                         changes the binary's signature), auto-detection
+#                         fails and every run, including scheduled ones,
+#                         crashes immediately. Being explicit here removes
+#                         that dependency.
 #    --update            only exports items new/changed since the last run
 #                         (tracked via --exportdb below) -- this is the
 #                         "sync" mechanism, nothing is re-copied or
@@ -90,16 +135,63 @@ echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 #    --directory          "{created.date}" is osxphotos' built-in ISO date
 #                         field -> one folder per capture day, e.g. 2026-08-18/
 #    --retry 3            osxphotos' own recommendation when exporting to a
-#                         NAS: automatically retries a file on transient
-#                         network/SMB errors instead of failing the run.
+#                         NAS: automatically retries a *file* on transient
+#                         network/SMB errors. This is short (seconds) and
+#                         doesn't cover a NAS actually rebooting -- that's
+#                         handled by the run-level retry loop below instead.
 #    (original filenames are kept by default -- no flag needed for that)
-"$OSXPHOTOS_BIN" export "$DEST_ROOT" \
-  --update \
-  --exportdb "$EXPORT_DB" \
-  --download-missing \
-  --directory "{created.date}" \
-  --retry 3 \
-  --touch-file \
+PHOTOS_LIBRARY="$HOME/Pictures/Photos Library.photoslibrary"
+if [ ! -d "$PHOTOS_LIBRARY" ]; then
+  echo "$LOG_TAG ERROR: Photos library not found at $PHOTOS_LIBRARY."
+  echo "$LOG_TAG If your library lives elsewhere, update PHOTOS_LIBRARY in this script."
+  exit 1
+fi
+
+EXPORT_CMD=(
+  "$OSXPHOTOS_BIN" export "$DEST_ROOT"
+  --library "$PHOTOS_LIBRARY"
+  --update
+  --exportdb "$EXPORT_DB"
+  --download-missing
+  --directory "{created.date}"
+  --retry 3
+  --touch-file
   --verbose
+)
+
+# Wrapped in caffeinate so macOS doesn't idle/system-sleep mid-export and
+# drop the SMB mount -- this run can take hours (or longer) on an initial
+# large library. Note this can't override a closed laptop lid forcing
+# clamshell sleep; keep the lid open (or an external display attached) and
+# the Mac plugged into power for the initial export.
+run_export() {
+  if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -s -m "${EXPORT_CMD[@]}"
+  else
+    "${EXPORT_CMD[@]}"
+  fi
+}
+
+# Run-level retry with backoff: if the NAS itself reboots or drops the SMB
+# session mid-export, osxphotos' own recovery is short (~30s) and gives up
+# by crashing the whole export rather than skipping ahead -- without this,
+# that means waiting for the next scheduled run (up to 24h) or a manual
+# restart. --update + the local --exportdb make a retry cheap: it resumes
+# at the first not-yet-exported item rather than starting over.
+RETRY_DELAYS=(60 180 300)
+attempt=1
+while true; do
+  run_export && break
+  status=$?
+  if [ "$attempt" -gt "${#RETRY_DELAYS[@]}" ]; then
+    echo "$LOG_TAG export failed after $attempt attempts (exit $status) -- giving up for this run; will resume at the next scheduled sync."
+    exit "$status"
+  fi
+  delay="${RETRY_DELAYS[$((attempt - 1))]}"
+  echo "$LOG_TAG export attempt $attempt failed (exit $status) -- retrying in ${delay}s (e.g. in case the NAS is rebooting)..."
+  sleep "$delay"
+  "$SCRIPT_DIR/mount_nas_share.sh" || true
+  attempt=$((attempt + 1))
+done
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') $LOG_TAG run end ====="
