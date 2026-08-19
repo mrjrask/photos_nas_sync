@@ -48,8 +48,12 @@ fi
 
 echo "-- 3/6 Copying scripts to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
-cp "$SCRIPT_SRC_DIR/sync_photos.sh" "$INSTALL_DIR/"
-cp "$SCRIPT_SRC_DIR/mount_nas_share.sh" "$INSTALL_DIR/"
+if [ "$SCRIPT_SRC_DIR" != "$INSTALL_DIR" ]; then
+  cp "$SCRIPT_SRC_DIR/sync_photos.sh" "$INSTALL_DIR/"
+  cp "$SCRIPT_SRC_DIR/mount_nas_share.sh" "$INSTALL_DIR/"
+else
+  echo "   Already running from $INSTALL_DIR; nothing to copy."
+fi
 chmod +x "$INSTALL_DIR/sync_photos.sh" "$INSTALL_DIR/mount_nas_share.sh"
 
 echo "-- 4/6 Running first sync now (this can take a while for a large library)"
