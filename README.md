@@ -198,6 +198,16 @@ things make this go smoothly:
 - **`Error: No such option '--original-name'`** — that flag doesn't exist in
   current osxphotos (it already preserves original filenames by default);
   it's been removed from `sync_photos.sh`.
+- **`WARNING ... could not find search db: .../database/search/psi.sqlite`**
+  — harmless, safe to ignore. `psi.sqlite` is Apple's *search index* database
+  (powers Photos' natural-language search, e.g. "beach" or "dog") — it's
+  built separately by the Photos app itself and isn't always present (e.g.
+  on-device analysis hasn't finished, or the library is new). `osxphotos`
+  only uses it for optional search-term metadata; when it's missing,
+  `osxphotos` logs this warning and moves on. Your actual files, dates,
+  EXIF/location data, and the `--exiftool`-written metadata (GPS, title,
+  caption, keywords, person names) are unaffected, and the export continues
+  normally.
 - **A run appears to re-copy everything from scratch, including files that
   already made it to the NAS** — this happens if `--update`'s tracking
   database can't be read (e.g. a prior run was interrupted, or SQLite's
