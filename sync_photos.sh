@@ -16,6 +16,17 @@ DEST_ROOT="/Volumes/data/Photos"
 LOG_FILE="$HOME/Library/Logs/photos-nas-sync.log"
 LOG_TAG="[photos-nas-sync]"
 
+# The --update export database is kept on LOCAL disk, not inside $DEST_ROOT.
+# osxphotos' database is a SQLite file, and SQLite's locking doesn't work
+# reliably over SMB -- if the database lives on the NAS, a run that gets
+# interrupted (or just flaky SMB locking) can leave it unreadable/stale, so
+# the next run can't tell what was already exported and re-exports
+# everything, creating "(1)"-suffixed duplicates next to the originals.
+# Keeping it locally makes --update's progress tracking reliable regardless
+# of the network share's behavior.
+EXPORT_DB_DIR="$HOME/Library/Application Support/photos-nas-sync"
+EXPORT_DB="$EXPORT_DB_DIR/export.db"
+
 # Local (non-network) lock so a launchd-triggered run and a manual run can
 # never overlap. Two processes racing to create $DEST_ROOT on the SMB share
 # at the same instant is what caused the "mkdir: Operation not permitted"
@@ -45,6 +56,8 @@ if ! mkdir -p "$DEST_ROOT"; then
   exit 1
 fi
 
+mkdir -p "$EXPORT_DB_DIR"
+
 # 2. Locate the osxphotos binary (handles pipx / brew / pip --user installs).
 OSXPHOTOS_BIN="$(command -v osxphotos || true)"
 if [ -z "$OSXPHOTOS_BIN" ]; then
@@ -65,9 +78,12 @@ echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 
 # 3. Incremental, full-resolution export.
 #    --update            only exports items new/changed since the last run
-#                         (tracked in an export database osxphotos keeps
-#                         inside $DEST_ROOT) -- this is the "sync" mechanism,
-#                         nothing is re-copied or duplicated on repeat runs.
+#                         (tracked via --exportdb below) -- this is the
+#                         "sync" mechanism, nothing is re-copied or
+#                         duplicated on repeat runs.
+#    --exportdb           puts the tracking database on LOCAL disk instead of
+#                         $DEST_ROOT (see EXPORT_DB comment above) so
+#                         --update's state survives flaky SMB locking.
 #    --download-missing  forces download of full-resolution originals that
 #                         are only iCloud-optimized (not fully on this Mac),
 #                         so nothing scaled-down ever lands on the NAS.
@@ -79,6 +95,7 @@ echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 #    (original filenames are kept by default -- no flag needed for that)
 "$OSXPHOTOS_BIN" export "$DEST_ROOT" \
   --update \
+  --exportdb "$EXPORT_DB" \
   --download-missing \
   --directory "{created.date}" \
   --retry 3 \
