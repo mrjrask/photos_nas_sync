@@ -152,6 +152,26 @@ things make this go smoothly:
   `~/photos_nas_sync/sync_photos.sh` manually from Terminal once so macOS can
   prompt you for Photos access interactively, then check
   System Settings → Privacy & Security → Photos.
+- **`Operation not permitted:
+  .../Containers/com.apple.Photos/Data/Library/Preferences/com.apple.Photos.plist`**
+  — macOS is blocking access to Photos' own sandboxed preferences file, which
+  `osxphotos` reads to auto-detect your library. `sync_photos.sh` now passes
+  `--library` explicitly so this shouldn't happen going forward, but if it
+  does: check System Settings → Privacy & Security → Full Disk Access and
+  make sure Terminal (or whatever runs this script) is listed and enabled —
+  quit and reopen Terminal after changing it. This can also surface after a
+  reinstall of `osxphotos` (a new binary signature can require re-granting
+  access).
+- **NAS reboots or drops the SMB connection mid-export** — `osxphotos`'s own
+  recovery for this is short (~30 seconds) and it crashes the whole export
+  rather than continuing, so `sync_photos.sh` now retries the whole export
+  itself up to 3 times with backoff (1 min, 3 min, 5 min), re-checking the
+  mount before each retry. Since progress is tracked locally
+  (`--exportdb`), a retry resumes at the first not-yet-exported item rather
+  than starting over — no duplicates, nothing lost. If it still fails after
+  all retries, it logs that and waits for the next scheduled run (or run
+  `~/photos_nas_sync/sync_photos.sh` manually once the NAS is confirmed
+  back up).
 - **`mkdir: /Volumes/data/Photos: Operation not permitted`** — this happened
   during initial install because the manual first run and the login-triggered
   launchd run raced to create the folder at the same instant over SMB. Fixed:

@@ -111,6 +111,17 @@ fi
 echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 
 # 3. Incremental, full-resolution export.
+#    --library            pins the source library explicitly instead of
+#                         letting osxphotos auto-detect it by reading
+#                         ~/Library/Containers/com.apple.Photos/.../
+#                         com.apple.Photos.plist. That plist lives inside
+#                         Photos' sandboxed container and requires Full Disk
+#                         Access -- if that TCC grant is ever missing/reset
+#                         (e.g. after an OS update or a pipx reinstall
+#                         changes the binary's signature), auto-detection
+#                         fails and every run, including scheduled ones,
+#                         crashes immediately. Being explicit here removes
+#                         that dependency.
 #    --update            only exports items new/changed since the last run
 #                         (tracked via --exportdb below) -- this is the
 #                         "sync" mechanism, nothing is re-copied or
@@ -124,11 +135,21 @@ echo "$LOG_TAG Using osxphotos at $OSXPHOTOS_BIN"
 #    --directory          "{created.date}" is osxphotos' built-in ISO date
 #                         field -> one folder per capture day, e.g. 2026-08-18/
 #    --retry 3            osxphotos' own recommendation when exporting to a
-#                         NAS: automatically retries a file on transient
-#                         network/SMB errors instead of failing the run.
+#                         NAS: automatically retries a *file* on transient
+#                         network/SMB errors. This is short (seconds) and
+#                         doesn't cover a NAS actually rebooting -- that's
+#                         handled by the run-level retry loop below instead.
 #    (original filenames are kept by default -- no flag needed for that)
+PHOTOS_LIBRARY="$HOME/Pictures/Photos Library.photoslibrary"
+if [ ! -d "$PHOTOS_LIBRARY" ]; then
+  echo "$LOG_TAG ERROR: Photos library not found at $PHOTOS_LIBRARY."
+  echo "$LOG_TAG If your library lives elsewhere, update PHOTOS_LIBRARY in this script."
+  exit 1
+fi
+
 EXPORT_CMD=(
   "$OSXPHOTOS_BIN" export "$DEST_ROOT"
+  --library "$PHOTOS_LIBRARY"
   --update
   --exportdb "$EXPORT_DB"
   --download-missing
@@ -143,10 +164,34 @@ EXPORT_CMD=(
 # large library. Note this can't override a closed laptop lid forcing
 # clamshell sleep; keep the lid open (or an external display attached) and
 # the Mac plugged into power for the initial export.
-if command -v caffeinate >/dev/null 2>&1; then
-  caffeinate -i -s -m "${EXPORT_CMD[@]}"
-else
-  "${EXPORT_CMD[@]}"
-fi
+run_export() {
+  if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -s -m "${EXPORT_CMD[@]}"
+  else
+    "${EXPORT_CMD[@]}"
+  fi
+}
+
+# Run-level retry with backoff: if the NAS itself reboots or drops the SMB
+# session mid-export, osxphotos' own recovery is short (~30s) and gives up
+# by crashing the whole export rather than skipping ahead -- without this,
+# that means waiting for the next scheduled run (up to 24h) or a manual
+# restart. --update + the local --exportdb make a retry cheap: it resumes
+# at the first not-yet-exported item rather than starting over.
+RETRY_DELAYS=(60 180 300)
+attempt=1
+while true; do
+  run_export && break
+  status=$?
+  if [ "$attempt" -gt "${#RETRY_DELAYS[@]}" ]; then
+    echo "$LOG_TAG export failed after $attempt attempts (exit $status) -- giving up for this run; will resume at the next scheduled sync."
+    exit "$status"
+  fi
+  delay="${RETRY_DELAYS[$((attempt - 1))]}"
+  echo "$LOG_TAG export attempt $attempt failed (exit $status) -- retrying in ${delay}s (e.g. in case the NAS is rebooting)..."
+  sleep "$delay"
+  "$SCRIPT_DIR/mount_nas_share.sh" || true
+  attempt=$((attempt + 1))
+done
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') $LOG_TAG run end ====="
