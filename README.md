@@ -14,6 +14,12 @@ into one folder per capture day.
 - **Full resolution:** originals only, never Photos' scaled/preview copies.
   Items that are iCloud-optimized (not fully downloaded to this Mac) are
   force-downloaded before export.
+- **Metadata preserved:** each exported file keeps its original embedded
+  EXIF/location data, *and* gets Photos' own metadata (GPS location, title,
+  caption, keywords, person names) written into it via `exiftool` — so
+  anything that only lives in the Photos library database (e.g. a location
+  you added or corrected inside Photos itself) is retained on the NAS copy
+  too, not just what the camera originally embedded in the file.
 - **Incremental:** each run only exports items that are new or changed since
   the last run — nothing is re-copied or duplicated. The tracking database
   that makes this work is kept on local disk (`~/Library/Application
@@ -30,6 +36,9 @@ into one folder per capture day.
 - Network access to `cm5.local`
 - One of `pipx`, Homebrew, or `pip3` available so `install.sh` can install
   [osxphotos](https://github.com/RhetTbull/osxphotos)
+- Homebrew (to install `exiftool`, used to write Photos' metadata into
+  exported files — see **What it does** above). Without Homebrew, install
+  [exiftool](https://exiftool.org) yourself before running `sync_photos.sh`.
 
 ## Files
 
@@ -142,6 +151,10 @@ things make this go smoothly:
 
 - **"osxphotos not found"** — re-run `install.sh`, or check
   `~/Library/Python/*/bin` / `~/.local/bin` is on your `PATH`.
+- **"exiftool not found"** — re-run `install.sh` (it installs `exiftool` via
+  Homebrew), or install it manually from https://exiftool.org. Without it,
+  `sync_photos.sh` now refuses to run rather than silently exporting files
+  that are missing Photos-only metadata (like a manually-added location).
 - **Mount fails / share unreachable** — the sync simply logs an error and
   exits; it will retry on the next scheduled run. Check `cm5.local` is
   reachable (`ping cm5.local`) and that Keychain has saved credentials for
