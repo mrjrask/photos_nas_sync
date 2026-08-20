@@ -184,11 +184,31 @@ EXPORT_CMD=(
 # large library. Note this can't override a closed laptop lid forcing
 # clamshell sleep; keep the lid open (or an external display attached) and
 # the Mac plugged into power for the initial export.
+#
+# Also wrapped in `taskpolicy -b` so osxphotos and the exiftool process it
+# shells out to run under macOS's "Darwin background" scheduling class --
+# throttled CPU and disk/network I/O priority relative to foreground apps.
+# Without this, a large export (thousands of files, --exiftool per file,
+# writes going out over SMB) competes for the CPU/IO on equal footing with
+# whatever you're doing interactively, which is what causes the mouse/
+# keyboard to stutter during a run. This only throttles this script's own
+# process tree -- if the machine still bogs down with `taskpolicy` in place,
+# check Activity Monitor for photolibraryd/cloudphotod: --download-missing
+# asks Photos to pull full-resolution originals down from iCloud, and that
+# download itself runs in Photos' own background daemons, outside this
+# script's control. For a large initial iCloud library, turning on Photos ->
+# Settings -> iCloud -> "Download Originals to this Mac" ahead of time lets
+# macOS fetch them at its own pace instead of osxphotos forcing it all at
+# once.
 run_export() {
+  local cmd=("${EXPORT_CMD[@]}")
+  if command -v taskpolicy >/dev/null 2>&1; then
+    cmd=(taskpolicy -b "${cmd[@]}")
+  fi
   if command -v caffeinate >/dev/null 2>&1; then
-    caffeinate -i -s -m "${EXPORT_CMD[@]}"
+    caffeinate -i -s -m "${cmd[@]}"
   else
-    "${EXPORT_CMD[@]}"
+    "${cmd[@]}"
   fi
 }
 
