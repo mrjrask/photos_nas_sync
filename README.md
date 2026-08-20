@@ -149,6 +149,39 @@ things make this go smoothly:
 
 ## Troubleshooting
 
+- **A "Python" icon appears in the Dock while a sync is running, and
+  right-clicking it always says "Application Not Responding"** — this is
+  expected and harmless, not a hang. Reading your Photos library at all
+  requires osxphotos to request PhotoKit authorization (the same permission
+  system behind the "Allow access to your Photos library" dialog above),
+  and that promotes the plain command-line Python process to a foreground
+  app in macOS's eyes. Since it's a CLI tool with no windows and no Cocoa
+  event loop, the Dock can't get a response out of it to its "are you
+  alive?" check, so it always shows "Not Responding" even while the export
+  is actively progressing fine in the log
+  (`tail -f ~/Library/Logs/photos-nas-sync.log`). Don't force-quit it from
+  the Dock — that kills the export mid-run.
+- **The whole Mac slows to a crawl (laggy/stuttering keyboard and mouse)
+  while a sync is running** — usually caused by `--download-missing`
+  forcing Photos to pull large numbers of full-resolution originals down
+  from iCloud during the export, which is genuinely CPU/memory-intensive
+  work that happens in Photos' own background daemons (check Activity
+  Monitor for `photolibraryd` / `cloudphotod` during a slow patch), not in
+  osxphotos itself -- so it's mostly outside this script's control.
+  `sync_photos.sh` now runs osxphotos under `taskpolicy -b` (macOS's
+  background scheduling class), which deprioritizes the CPU/disk/network
+  usage of osxphotos and the `exiftool` process it shells out to relative
+  to whatever you're actively using -- update to the latest version of this
+  script if `taskpolicy` isn't already in `run_export()`. If it's still bad
+  after that, the iCloud download itself is almost certainly the cause; the
+  most effective fix is to avoid forcing it during export in the first
+  place: open Photos -> Settings -> iCloud and turn on **"Download
+  Originals to this Mac"** a day or more before your next big sync, so
+  macOS fetches full-resolution originals in the background at its own
+  (much gentler) pace. Once your library is fully downloaded locally,
+  `--download-missing` has nothing left to force and this slowdown should
+  disappear; it's mainly a one-time pain point for the initial large
+  migration, not something later small incremental runs should reproduce.
 - **"osxphotos not found"** — re-run `install.sh`, or check
   `~/Library/Python/*/bin` / `~/.local/bin` is on your `PATH`.
 - **"exiftool not found"** — re-run `install.sh` (it installs `exiftool` via
