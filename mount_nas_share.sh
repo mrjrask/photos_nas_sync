@@ -25,7 +25,7 @@ echo "$LOG_TAG Mounting $SHARE_URL ..."
 }
 
 # Give macOS a moment to finish attaching the volume.
-for i in 1 2 3 4 5; do
+for _ in 1 2 3 4 5; do
   if mount | grep -q " on ${MOUNT_POINT} "; then
     echo "$LOG_TAG Mounted successfully."
     exit 0
